@@ -16,6 +16,7 @@ import android.hardware.SensorManager;
 
 import android.location.Location;
 import android.os.Bundle;
+import android.os.Handler;
 import android.preference.PreferenceManager;
 import android.view.View;
 import android.view.WindowManager;
@@ -44,10 +45,15 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private GeoPoint currentLocationPoint;
     //IMapController mapController = map.getController();
 
+    //Marker
+    private Marker inicioMarker;
+    private Handler markerHandler = new Handler();
+    private final int INTERVALO_MARCADORES = 60000;
+    private boolean marcadoresSecundariosActivos = false; //Necesario para controlar los markers secundarios
 
 
     //Sensores
-    private TextView textViewStepCounter, textViewStepDetector;
+    private TextView textViewStepCounter;
     private SensorManager sensorManager;
     private Sensor stepCounter, stepDetector;
     private boolean isCounterSensorPresent, isDetectorSensorPresent;
@@ -66,7 +72,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         btnForzado.setOnClickListener(new View.OnClickListener(){
             @Override
             public void onClick(View v){
-                if (sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null) {
+
+                reiniciarContadorPasos();
+                // Forzar el conteo del sensor TEST
+                /* if (sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null) {
                     sensorManager.unregisterListener(MainActivity.this, stepCounter);
                     sensorManager.registerListener(MainActivity.this, stepCounter, SensorManager.SENSOR_DELAY_FASTEST);
                 }
@@ -74,6 +83,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 //    sensorManager.unregisterListener(MainActivity.this, stepDetector);
                 //    sensorManager.registerListener(MainActivity.this, stepDetector, SensorManager.SENSOR_DELAY_FASTEST);
                 //}
+
+                 */
             }
         });
 
@@ -97,7 +108,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         //    isDetectorSensorPresent = false;
         //}
 
-        // MAPA boton de reinicio de ubicacion:
+        // MAPA boton de INICIO y subprocesos
         btnUpdate = findViewById(R.id.btnUpdate);
         btnUpdate.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -117,18 +128,29 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
                         GeoPoint inicioPoint = new GeoPoint(currentLocationPoint);
 
-                        Marker inicioMarker = new Marker(map);
-
+                        inicioMarker = new Marker(map);
                         inicioMarker.setPosition(inicioPoint);
-                        map.getOverlays().add(inicioMarker);
-                        if(inicioMarker != null) {
-                            //GeoPoint finalPoint = new GeoPoint(-33.45209486172414, -70.65359366103158); // Parque almagro para pruebas de marker
-                            GeoPoint finalPoint = new GeoPoint(currentLocationPoint);
-                            Marker finalMarker = new Marker(map);
-                            finalMarker.setPosition(finalPoint);
-                            map.getOverlays().add(finalMarker);
-                        }
 
+                        // Modificar el marker para identificar el primero de los demás
+                        inicioMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                        inicioMarker.setTitle("INICIO");
+                        inicioMarker.setSnippet("inicio de ruta");
+
+                        map.getOverlays().add(inicioMarker);
+
+                        if(!marcadoresSecundariosActivos){
+                            iniciarMarcadoresSecundarios();
+                        }
+                    } else {
+                        Marker finalMarker = new Marker(map);
+                        finalMarker.setPosition(currentLocationPoint);
+                        finalMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                        finalMarker.setTitle("FINAL");
+                        finalMarker.setSnippet("final de ruta");
+
+                        map.getOverlays().add(finalMarker);
+
+                        detenerMarcadoresSecundarios();
                     }
                 }
             }
@@ -206,5 +228,101 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         map.onPause();
     }
 
+    private void reiniciarContadorPasos(){
+        textViewStepCounter.setText("0");
+
+        if(sensorManager != null && stepCounter != null){
+            sensorManager.registerListener(MainActivity.this, stepCounter, sensorManager.SENSOR_DELAY_FASTEST);
+        }
+    }
+
+    // Markers secundarios + HILOS
+    private void iniciarMarcadoresSecundarios() {
+        marcadoresSecundariosActivos = true;
+        Thread marcadoresThread = new Thread(new Runnable(){
+            @Override
+            public void run(){
+                while(marcadoresSecundariosActivos) {
+                    try{
+                        runOnUiThread(new Runnable(){
+                            @Override
+                            public void run(){
+                                if(inicioMarker != null){
+                                    Marker nextMarker = new Marker(map);
+                                    nextMarker.setPosition(currentLocationPoint);
+                                    nextMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                                    nextMarker.setTitle("RUTA");
+                                    nextMarker.setSnippet("en ruta");
+
+                                    map.getOverlays().add(nextMarker);
+                                } else {
+                                    marcadoresSecundariosActivos = false;
+                                }
+                            }
+                        });
+
+                        Thread.sleep(INTERVALO_MARCADORES);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        });
+        marcadoresThread.start();
+    }
+
+    private void detenerMarcadoresSecundarios() {
+        marcadoresSecundariosActivos = false;
+    }
 
 }
+
+/*
+btnUpdate.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if(ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION)!= PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_COARSE_LOCATION)!= PackageManager.PERMISSION_GRANTED){
+                    ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, 100);
+                } else {
+                    Location location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                    if(location != null) {
+                        double latitude = location.getLatitude();
+                        double longitude = location.getLongitude();
+
+                        currentLocationPoint = new GeoPoint(latitude, longitude);
+                        IMapController mapController1 = map.getController();
+                        mapController1.setZoom(18);
+                        mapController1.setCenter(currentLocationPoint);
+
+                        GeoPoint inicioPoint = new GeoPoint(currentLocationPoint);
+
+                        inicioMarker = new Marker(map);
+                        inicioMarker.setPosition(inicioPoint);
+
+                        // Modificar el marker para identificar el primero de los demás
+                        inicioMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                        inicioMarker.setTitle("INICIO");
+                        inicioMarker.setSnippet("inicio de ruta");
+
+                        map.getOverlays().add(inicioMarker);
+
+                        if(inicioMarker != null) {
+                            GeoPoint finalPoint = new GeoPoint(-33.45209486172414, -70.65359366103158); // Parque almagro para pruebas de marker
+                            //GeoPoint finalPoint = new GeoPoint(currentLocationPoint);
+                            Marker nextMarker = new Marker(map);
+                            nextMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                            nextMarker.setTitle("RUTA");
+                            nextMarker.setSnippet("ruta");
+
+                            nextMarker.setPosition(finalPoint);
+                            map.getOverlays().add(nextMarker);
+
+                            //Modificacion al boton
+                            btnUpdate.setText("Marcardo forzado");
+                        }
+
+                    }
+                }
+            }
+        });
+ */
