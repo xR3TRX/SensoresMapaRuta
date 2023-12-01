@@ -1,0 +1,298 @@
+package com.xr3trx.sensores;
+
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+import android.Manifest;
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.location.Location;
+import android.location.LocationManager;
+import android.os.Bundle;
+import android.os.Handler;
+import android.preference.PreferenceManager;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import org.osmdroid.api.IMapController;
+import org.osmdroid.config.Configuration;
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
+import org.osmdroid.util.GeoPoint;
+import org.osmdroid.views.MapView;
+import org.osmdroid.views.overlay.Marker;
+
+public class MainActivity2 extends AppCompatActivity implements SensorEventListener {
+
+    //mapa
+    MapView map = null;
+    private LocationManager locationManager;
+    private GeoPoint currentLocationPoint, nextLocationPoint;
+    //IMapController mapController = map.getController();
+
+    //Marker
+    private Marker inicioMarker;
+    private Handler markerHandler = new Handler();
+    private final int INTERVALO_MARCADORES = 60000;
+    private boolean marcadoresSecundariosActivos = false; //Necesario para controlar los markers secundarios
+
+
+    //Sensores
+    private TextView textViewStepCounter;
+    private SensorManager sensorManager;
+    private Sensor stepCounter;
+    private boolean isCounterSensorPresent;
+    int stepCount = 0;
+    private Button btnInicio, btnFinal;
+
+    //Permisos
+    String[] permissions = {
+            android.Manifest.permission.ACCESS_FINE_LOCATION,
+            android.Manifest.permission.INTERNET,
+            android.Manifest.permission.ACCESS_NETWORK_STATE,
+            android.Manifest.permission.ACTIVITY_RECOGNITION,
+            android.Manifest.permission.BODY_SENSORS
+    };
+    boolean allPermissionsGranted = true;
+
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main2);
+
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+        for (String permission : permissions) {
+            if (ContextCompat.checkSelfPermission(MainActivity2.this, permission) != PackageManager.PERMISSION_GRANTED) {
+                allPermissionsGranted = false;
+                break;
+            }
+        }
+        if (!allPermissionsGranted) {
+            ActivityCompat.requestPermissions(MainActivity2.this, permissions, 100);
+        }
+
+        btnInicio = findViewById(R.id.btnInicio);
+        btnInicio.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (ContextCompat.checkSelfPermission(MainActivity2.this, android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(MainActivity2.this, android.Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(MainActivity2.this, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION}, 100);
+                } else {
+                    Location location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                    if (location != null) {
+                        double latitude = location.getLatitude();
+                        double longitude = location.getLongitude();
+
+                        currentLocationPoint = new GeoPoint(latitude, longitude);
+                        IMapController mapController1 = map.getController();
+                        mapController1.setZoom(18);
+                        mapController1.setCenter(currentLocationPoint);
+
+                        GeoPoint inicioPoint = new GeoPoint(currentLocationPoint);
+
+                        inicioMarker = new Marker(map);
+                        inicioMarker.setPosition(inicioPoint);
+
+                        // Modificar el marker para identificar el primero de los demás
+                        inicioMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                        inicioMarker.setTitle("INICIO");
+                        inicioMarker.setSnippet("inicio de ruta");
+
+                        map.getOverlays().add(inicioMarker);
+
+                        if (!marcadoresSecundariosActivos) {
+                            iniciarMarcadoresSecundarios();
+                        }
+                    }
+                }
+            }
+        });
+
+        textViewStepCounter = findViewById(R.id.textViewCounter);
+
+        sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+
+        if(sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)!=null){
+            stepCounter = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+            isCounterSensorPresent = true;
+        } else {
+            textViewStepCounter.setText("Sensor no está presente");
+            isCounterSensorPresent = false;
+        }
+
+        // MAPA boton de final
+        btnFinal = findViewById(R.id.btnFinal);
+        btnFinal.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+
+                if (inicioMarker != null) {
+                    if (ContextCompat.checkSelfPermission(MainActivity2.this, android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(MainActivity2.this, android.Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                        ActivityCompat.requestPermissions(MainActivity2.this, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION}, 100);
+                    } else {
+                        Location location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                        if (location != null) {
+                            double latitude = location.getLatitude();
+                            double longitude = location.getLongitude();
+
+                            currentLocationPoint = new GeoPoint(latitude, longitude);
+
+                            //GeoPoint finalPoint = new GeoPoint(-33.45209486172414, -70.65359366103158); // Parque almagro TEST
+                            GeoPoint finalPoint = new GeoPoint(currentLocationPoint);
+
+                            IMapController mapController1 = map.getController();
+                            mapController1.setZoom(18);
+                            mapController1.setCenter(currentLocationPoint);
+
+                            Marker finalMarker = new Marker(map);
+                            finalMarker.setPosition(finalPoint);
+                            finalMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                            finalMarker.setTitle("FINAL");
+                            finalMarker.setSnippet("final de ruta");
+
+                            map.getOverlays().add(finalMarker);
+
+                            detenerMarcadoresSecundarios();
+                            marcadoresSecundariosActivos = false;
+                        }
+                    }
+                }
+            }
+        });
+
+        // MAPA
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+
+        Context ctx = getApplicationContext();
+        Configuration.getInstance().load(ctx, PreferenceManager.getDefaultSharedPreferences(ctx));
+
+        map = (MapView) findViewById(R.id.map);
+        map.setTileSource(TileSourceFactory.MAPNIK);
+
+        // MAPA controles
+        map.setBuiltInZoomControls(true);
+        map.setMultiTouchControls(true);
+
+        // MAPA default view point
+
+        IMapController mapController = map.getController();  // Era el original Lo movi a la lista de atributos inicializados
+        mapController.setZoom(2);
+        GeoPoint startPoint = new GeoPoint(0, 0);     //Era el original lo modifiqué para poder iniciar en la ubicacion actual
+        //GeoPoint startPoint = new GeoPoint(currentLocationPoint);       // Corresponde a la ubicacion que entrega el boton
+        mapController.setCenter(startPoint);
+
+
+    }
+
+    // MAPA
+
+
+
+    //SENSOR contador de pasos
+
+    @Override
+    public void onSensorChanged(SensorEvent sensorEvent) {
+        if(sensorEvent.sensor == stepCounter){
+            stepCount = (int) sensorEvent.values[0];
+            textViewStepCounter.setText(String.valueOf(stepCount));
+        }
+    }
+
+    @Override
+    public void onAccuracyChanged(Sensor sensor, int i) {
+
+    }
+
+    @Override
+    public void onResume(){
+        super.onResume();
+        if(sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)!=null)
+            sensorManager.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_FASTEST);
+
+        // MAPA
+        map.onResume();
+    }
+
+    @Override
+    public void onPause(){
+        super.onPause();
+        if(sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)!=null)
+            sensorManager.unregisterListener(this, stepCounter);
+
+        // MAPA
+        map.onPause();
+    }
+
+    private void reiniciarContadorPasos(){
+        textViewStepCounter.setText("0");
+
+        if(sensorManager != null && stepCounter != null){
+            sensorManager.registerListener(MainActivity2.this, stepCounter, sensorManager.SENSOR_DELAY_FASTEST);
+        }
+    }
+
+    // Markers secundarios + HILOS
+    private void iniciarMarcadoresSecundarios() {
+        marcadoresSecundariosActivos = true;
+
+        Handler handler = new Handler();
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                ejecutarActualizacionMarcadores();
+            }
+        }, INTERVALO_MARCADORES);
+    }
+
+    private void ejecutarActualizacionMarcadores() {
+
+        if(inicioMarker != null){
+            if(ContextCompat.checkSelfPermission(MainActivity2.this, android.Manifest.permission.ACCESS_FINE_LOCATION)!= PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(MainActivity2.this, android.Manifest.permission.ACCESS_COARSE_LOCATION)!= PackageManager.PERMISSION_GRANTED){
+                ActivityCompat.requestPermissions(MainActivity2.this, new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, 100);
+            } else {
+                Location location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                if (location != null) {
+                    double latitudeN = location.getLatitude();
+                    double longitudeN = location.getLongitude();
+
+                    nextLocationPoint = new GeoPoint(latitudeN, longitudeN);
+                    Marker nextMarker = new Marker(map);
+
+                    IMapController mapController2 = map.getController();
+                    mapController2.setZoom(18);
+                    mapController2.setCenter(nextLocationPoint);
+
+                    nextMarker.setPosition(nextLocationPoint);
+                    nextMarker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM);
+                    nextMarker.setTitle("RUTA");
+                    nextMarker.setSnippet("en ruta");
+
+                    map.getOverlays().add(nextMarker);
+                    Toast.makeText(getApplicationContext(), "Se agrego un marcador a la ruta", Toast.LENGTH_SHORT).show();
+
+                }
+            }
+        } else {
+            marcadoresSecundariosActivos = false;
+        }
+
+
+        if (marcadoresSecundariosActivos) {
+            iniciarMarcadoresSecundarios();
+        }
+    }
+
+    private void detenerMarcadoresSecundarios() {
+        marcadoresSecundariosActivos = false;
+    }
+
+}
