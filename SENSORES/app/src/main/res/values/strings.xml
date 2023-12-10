@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">SENSORES</string>
+    <string name="confirmar">Confirmar</string>
+    <string name="password">Password</string>
+    <string name="nombre">NOMBRE</string>
+    <string name="usuario">USUARIO</string>
 </resources>

@@ -1,11 +1,16 @@
 package com.xr3trx.sensores;
 
+import static android.graphics.Color.BLACK;
+import static android.graphics.Color.GREEN;
+
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -22,12 +27,30 @@ import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
+
+import org.eclipse.paho.android.service.MqttAndroidClient;
+import org.eclipse.paho.client.mqttv3.IMqttActionListener;
+import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
+import org.eclipse.paho.client.mqttv3.IMqttToken;
+import org.eclipse.paho.client.mqttv3.MqttCallback;
+import org.eclipse.paho.client.mqttv3.MqttClient;
+import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
+import org.eclipse.paho.client.mqttv3.MqttException;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
+import org.eclipse.paho.client.mqttv3.MqttSecurityException;
 import org.osmdroid.api.IMapController;
 import org.osmdroid.config.Configuration;
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
 import org.osmdroid.views.overlay.Marker;
+
+import java.nio.charset.StandardCharsets;
 
 public class MainActivity2 extends AppCompatActivity implements SensorEventListener {
 
@@ -58,9 +81,28 @@ public class MainActivity2 extends AppCompatActivity implements SensorEventListe
             android.Manifest.permission.INTERNET,
             android.Manifest.permission.ACCESS_NETWORK_STATE,
             android.Manifest.permission.ACTIVITY_RECOGNITION,
-            android.Manifest.permission.BODY_SENSORS
+            android.Manifest.permission.BODY_SENSORS,
+            android.Manifest.permission.WAKE_LOCK
     };
     boolean allPermissionsGranted = true;
+
+    //Extra
+    private String username, nombre;
+
+    //MQTT Conexion
+    //mqtt://aplicaciona:utMP5rJYaEHwi3mb@aplicaciona.cloud.shiftr.io
+    //mqtt://asdfg:sivboFqSlGl9ZoOu@asdfg.cloud.shiftr.io
+    static String MQTTHOST = "tcp://asdfg.cloud.shiftr.io:1883";
+    static String MQTTUSER = "asdfg";
+    static String MQTTPASS = "sivboFqSlGl9ZoOu";
+
+    static String TOPIC = "INICIAR";
+    static String TOPIC_MSG_ON = "Caminando";
+    static String TOPIC_MSG_OFF = "Detenido";
+    Boolean permisoPublicar;
+
+    MqttAndroidClient cliente;
+    MqttConnectOptions opciones;
 
 
     @Override
@@ -69,6 +111,14 @@ public class MainActivity2 extends AppCompatActivity implements SensorEventListe
         setContentView(R.layout.activity_main2);
 
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+        Intent intent = getIntent();
+        if(intent != null && intent.hasExtra("USUARIO") && intent.hasExtra("NOMBRE")) {
+            username = intent.getStringExtra("USUARIO");
+            nombre = intent.getStringExtra("NOMBRE");
+        }
+
+        Toast.makeText(this, "BIENVENID@ "+nombre+".", Toast.LENGTH_SHORT).show();
 
         for (String permission : permissions) {
             if (ContextCompat.checkSelfPermission(MainActivity2.this, permission) != PackageManager.PERMISSION_GRANTED) {
@@ -109,6 +159,8 @@ public class MainActivity2 extends AppCompatActivity implements SensorEventListe
 
                         map.getOverlays().add(inicioMarker);
 
+                        enviarMensaje(TOPIC, TOPIC_MSG_ON);
+
                         if (!marcadoresSecundariosActivos) {
                             iniciarMarcadoresSecundarios();
                         }
@@ -125,7 +177,7 @@ public class MainActivity2 extends AppCompatActivity implements SensorEventListe
             stepCounter = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
             isCounterSensorPresent = true;
         } else {
-            textViewStepCounter.setText("Sensor no está presente");
+            textViewStepCounter.setText("Sensor no disponible");
             isCounterSensorPresent = false;
         }
 
@@ -161,8 +213,49 @@ public class MainActivity2 extends AppCompatActivity implements SensorEventListe
 
                             map.getOverlays().add(finalMarker);
 
+                            enviarMensaje(TOPIC, TOPIC_MSG_OFF);
+
                             detenerMarcadoresSecundarios();
                             marcadoresSecundariosActivos = false;
+
+                            FirebaseDatabase db = FirebaseDatabase.getInstance();
+                            DatabaseReference dbref = db.getReference(Usuario.class.getSimpleName());
+
+                            dbref.addListenerForSingleValueEvent(new ValueEventListener() {
+                                @Override
+                                public void onDataChange(@NonNull DataSnapshot snapshot) {
+
+                                    boolean resUsuario = false;
+                                    for(DataSnapshot u : snapshot.getChildren()){
+
+                                        if(u.child("usuario").getValue().toString().equals(username)){
+                                            resUsuario = true;
+                                            int pasosComparar = Integer.parseInt(u.child("pasosRegistrados").getValue(String.class));
+                                            int pasosNuevosComparar = Integer.parseInt(textViewStepCounter.getText().toString());
+
+                                            Toast.makeText(MainActivity2.this, "Has dado "+textViewStepCounter.getText()+" pasos", Toast.LENGTH_SHORT).show();
+
+                                            if(pasosComparar < pasosNuevosComparar){
+                                                u.getRef().child("pasosRegistrados").setValue(textViewStepCounter.getText());
+                                                Toast.makeText(MainActivity2.this, "Acabas de establecer un nuevo record de pasos!", Toast.LENGTH_SHORT).show();
+                                                Toast.makeText(MainActivity2.this, "Tu nuevo record es: "+textViewStepCounter.getText()+".", Toast.LENGTH_SHORT).show();
+                                                break;
+                                            } else {
+                                                Toast.makeText(MainActivity2.this, "Esta vez no pudiste superar tu record.", Toast.LENGTH_SHORT).show();
+                                                Toast.makeText(MainActivity2.this, "Sigue esforzandote!", Toast.LENGTH_SHORT).show();
+                                            }
+                                        } //if
+                                    }//for
+                                    if(resUsuario == false){
+                                        Toast.makeText(MainActivity2.this, "No se han registrado tus pasos en la BD", Toast.LENGTH_SHORT).show();
+                                    }//if(resUsuario)
+                                }//onDataChange
+
+                                @Override
+                                public void onCancelled(@NonNull DatabaseError error) {
+
+                                }
+                            });
                         }
                     }
                 }
@@ -190,12 +283,34 @@ public class MainActivity2 extends AppCompatActivity implements SensorEventListe
         //GeoPoint startPoint = new GeoPoint(currentLocationPoint);       // Corresponde a la ubicacion que entrega el boton
         mapController.setCenter(startPoint);
 
-
+        connectBroker();
     }
 
-    // MAPA
+    //MQTT
+    private void connectBroker(){
+        this.cliente = new MqttAndroidClient(this.getApplicationContext(), MQTTHOST, this.username);
+        this.opciones = new MqttConnectOptions();
+        this.opciones.setUserName(MQTTUSER);
+        this.opciones.setPassword(MQTTPASS.toCharArray());
 
+        try {
+            IMqttToken token = this.cliente.connect(opciones);
+            token.setActionCallback(new IMqttActionListener() {
+                @Override
+                public void onSuccess(IMqttToken asyncActionToken) {
+                    Toast.makeText(getBaseContext(), "CONECTADO", Toast.LENGTH_SHORT).show();
+                    suscribirseTopic();
+                }
 
+                @Override
+                public void onFailure(IMqttToken asyncActionToken, Throwable exception) {
+                    Toast.makeText(getBaseContext(), "CONEXION FALLIDA", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } catch (MqttException e) {
+            throw new RuntimeException(e);
+        }
+    }
 
     //SENSOR contador de pasos
 
@@ -293,6 +408,63 @@ public class MainActivity2 extends AppCompatActivity implements SensorEventListe
 
     private void detenerMarcadoresSecundarios() {
         marcadoresSecundariosActivos = false;
+    }
+
+    private void enviarMensaje(String topic, String msg){
+        checkConexion();
+        if(permisoPublicar){
+            try{
+                int qos = 0;
+                this.cliente.publish(topic, msg.getBytes(), qos, false);
+                Toast.makeText(this, topic + " : " + msg, Toast.LENGTH_SHORT).show();
+            }catch (Exception e){
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void checkConexion(){
+        if(this.cliente.isConnected()){
+            this.permisoPublicar = true;
+        }else{
+            this.permisoPublicar = false;
+            connectBroker();
+        }
+    }
+
+    private void suscribirseTopic(){
+        try{
+            this.cliente.subscribe(TOPIC, 0);
+        }catch(MqttSecurityException e){
+            e.printStackTrace();
+        }catch(MqttException e){
+            e.printStackTrace();
+        }
+
+        this.cliente.setCallback(new MqttCallback() {
+            @Override
+            public void connectionLost(Throwable cause) {
+                Toast.makeText(MainActivity2.this, "MQTT desconectado", Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void messageArrived(String topic, MqttMessage message) throws Exception {
+                if(topic.matches(TOPIC)){
+                    String msg = new String(message.getPayload());
+                    if(msg.matches(TOPIC_MSG_ON)){
+                        textViewStepCounter.setBackgroundColor(GREEN);
+                    }
+                    if(msg.matches(TOPIC_MSG_OFF)){
+                        textViewStepCounter.setBackgroundColor(BLACK);
+                    }
+                }
+            }
+
+            @Override
+            public void deliveryComplete(IMqttDeliveryToken token) {
+
+            }
+        });
     }
 
 }
